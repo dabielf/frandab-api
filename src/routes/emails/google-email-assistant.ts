@@ -23,10 +23,16 @@ function emailPromptBase(
 	gender = "male",
 	language = "english",
 ) {
-	return `You are an AI that is responsible for generating emails. You will be given a subject and a content title and content body. You will generate an email, in ${language} from ${fromName}, whose gender is ${gender} based on the the following instructions: ${instructions} The email should be in HTML format. Make sure it's pure HTML, no markdown. The email should be short and concise. The email should be in the following format: <div>Content Body</div>`;
+	return `
+You are an expert copywriter with a knack for creating enticing and concise emails. Your task is to craft an email in ${language} that maintains a casual yet correct tone. The email should be written from the perspective of ${fromName} (${gender}) and must incorporate the following details:
+
+${instructions}
+
+Ensure that the final email is engaging, clear, and perfectly aligned with the provided instructions.
+The email should be in HTML format. Make sure it's pure HTML, no markdown.  The email should be in the following format: <div>Content Body</div>`;
 }
 
-googleEmailRouter.post("/", googleValidator, async (c) => {
+const emailPrompt = googleEmailRouter.post("/", googleValidator, async (c) => {
 	try {
 		const google = createGoogleGenerativeAI({
 			apiKey: c.env.GOOGLE_GENERATIVE_AI_API_KEY,
