@@ -1,9 +1,13 @@
-import { Hono } from 'hono'
+import { Hono } from "hono";
+import userRouter from "./routes/users";
 
-const app = new Hono<{ Bindings: CloudflareBindings }>()
+const app = new Hono<{ Bindings: CloudflareBindings }>();
 
-app.get('/', (c) => {
-  return c.text('Hello Hono!')
-})
+app.get("/", (c) => {
+	return c.text("Hello François, welcome to your API!");
+});
 
-export default app
+// Mount user routes under /users
+app.route("/users", userRouter);
+
+export default app;
