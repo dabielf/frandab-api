@@ -16,12 +16,14 @@ const userSchema = z.object({
 });
 
 // Generate a secure API key
-function generateApiKey(): string {
+export function generateApiKey(): string {
 	return crypto.randomUUID();
 }
 
+export const validator = zValidator("json", userSchema);
+
 // Create user
-userRouter.post("/", zValidator("json", userSchema), async (c) => {
+userRouter.post("/", validator, async (c) => {
 	try {
 		const { email, name } = c.req.valid("json");
 		const db = getDB(c.env);
