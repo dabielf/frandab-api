@@ -28,18 +28,26 @@ userRouter.post("/", zValidator("json", userSchema), async (c) => {
 
 		// Start a transaction to create both user and API key
 		const result = await db.transaction(async (tx) => {
-			const [user] = await tx.insert(users).values({ email, name }).returning();
+			try {
+				const [user] = await tx
+					.insert(users)
+					.values({ email, name })
+					.returning();
 
-			const apiKey = generateApiKey();
-			const [key] = await tx
-				.insert(apiKeys)
-				.values({
-					userId: user.id,
-					key: apiKey,
-				})
-				.returning();
+				const apiKey = generateApiKey();
+				const [key] = await tx
+					.insert(apiKeys)
+					.values({
+						userId: user.id,
+						key: apiKey,
+					})
+					.returning();
 
-			return { user, apiKey: key.key };
+				return { user, apiKey: key.key };
+			} catch (error) {
+				console.log(error);
+				throw error;
+			}
 		});
 
 		return c.json(result, 201);
