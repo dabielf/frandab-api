@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-// import { getDB } from "../../lib/server/db";
 import { Resend } from "resend";
 import testEmailTemplate from "../../lib/emails/test";
+import googleEmailRouter from "./google-email-assistant";
 
 const emailRouter = new Hono<{ Bindings: CloudflareBindings }>();
 
@@ -18,8 +18,7 @@ const validator = zValidator("json", emailSchema);
 // Create email
 emailRouter.post("/", validator, async (c) => {
 	try {
-		// biome-ignore lint/style/noNonNullAssertion: <explanation>
-		const resend = new Resend(c.env.RESEND_API_KEY)!;
+		const resend = new Resend(c.env.RESEND_API_KEY);
 		const { email, firstName, subject } = c.req.valid("json");
 
 		const data = await resend.emails.send({
@@ -37,5 +36,7 @@ emailRouter.post("/", validator, async (c) => {
 		);
 	}
 });
+
+emailRouter.route("/google", googleEmailRouter);
 
 export default emailRouter;
