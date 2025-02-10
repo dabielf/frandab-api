@@ -60,7 +60,15 @@ const emailPrompt = googleEmailRouter.post("/", googleValidator, async (c) => {
 			subject,
 			html: htmlContent,
 		});
-		return c.json(data);
+		return c.json(
+			{
+				data,
+				message: "Email sent successfully",
+				subject,
+				html: htmlContent,
+			},
+			200,
+		);
 	} catch (error) {
 		return c.json(
 			{ error: "Internal server error", message: (error as Error).message },
