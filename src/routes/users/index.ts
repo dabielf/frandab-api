@@ -3,12 +3,11 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { db } from "../../lib/server/db";
+import { getDB } from "../../lib/server/db";
 import { users, apiKeys } from "../../lib/server/db/schema";
 import { eq } from "drizzle-orm";
-import { randomBytes } from "node:crypto";
 
-const userRouter = new Hono();
+const userRouter = new Hono<{ Bindings: CloudflareBindings }>();
 
 // Schema for user creation and update
 const userSchema = z.object({
@@ -18,13 +17,14 @@ const userSchema = z.object({
 
 // Generate a secure API key
 function generateApiKey(): string {
-	return randomBytes(32).toString("hex");
+	return crypto.randomUUID();
 }
 
 // Create user
 userRouter.post("/", zValidator("json", userSchema), async (c) => {
 	try {
 		const { email, name } = c.req.valid("json");
+		const db = getDB(c.env);
 
 		// Start a transaction to create both user and API key
 		const result = await db.transaction(async (tx) => {
@@ -54,6 +54,7 @@ userRouter.post("/", zValidator("json", userSchema), async (c) => {
 // Get all users
 userRouter.get("/", async (c) => {
 	try {
+		const db = getDB(c.env);
 		const userList = await db.select().from(users);
 		return c.json({ users: userList });
 	} catch (error) {
@@ -64,6 +65,7 @@ userRouter.get("/", async (c) => {
 // Get user by id
 userRouter.get("/:id", async (c) => {
 	try {
+		const db = getDB(c.env);
 		const id = Number(c.req.param("id"));
 		const [user] = await db.select().from(users).where(eq(users.id, id));
 
@@ -80,6 +82,7 @@ userRouter.get("/:id", async (c) => {
 // Update user
 userRouter.put("/:id", zValidator("json", userSchema), async (c) => {
 	try {
+		const db = getDB(c.env);
 		const id = Number(c.req.param("id"));
 		const { email, name } = c.req.valid("json");
 
@@ -109,6 +112,7 @@ userRouter.put("/:id", zValidator("json", userSchema), async (c) => {
 // Delete user
 userRouter.delete("/:id", async (c) => {
 	try {
+		const db = getDB(c.env);
 		const id = Number(c.req.param("id"));
 
 		const [deletedUser] = await db
