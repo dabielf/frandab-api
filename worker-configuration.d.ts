@@ -3,5 +3,7 @@
 interface CloudflareBindings {
 	KV: KVNamespace;
 	RESEND_API_KEY: string;
+	OPENAI_API_KEY: string;
+	GOOGLE_GENERATIVE_AI_API_KEY: string;
 	DB: D1Database;
 }
