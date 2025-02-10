@@ -27,35 +27,27 @@ userRouter.post("/", zValidator("json", userSchema), async (c) => {
 		const db = getDB(c.env);
 
 		// Start a transaction to create both user and API key
-		const result = await db.transaction(async (tx) => {
-			try {
-				const [user] = await tx
-					.insert(users)
-					.values({ email, name })
-					.returning();
 
-				const apiKey = generateApiKey();
-				const [key] = await tx
-					.insert(apiKeys)
-					.values({
-						userId: user.id,
-						key: apiKey,
-					})
-					.returning();
+		const [user] = await db.insert(users).values({ email, name }).returning();
 
-				return { user, apiKey: key.key };
-			} catch (error) {
-				console.log(error);
-				throw error;
-			}
-		});
+		const apiKey = generateApiKey();
+		const [key] = await db
+			.insert(apiKeys)
+			.values({
+				userId: user.id,
+				key: apiKey,
+			})
+			.returning();
 
-		return c.json(result, 201);
+		return c.json({ user, apiKey: key.key }, 201);
 	} catch (error) {
 		if ((error as Error).message.includes("UNIQUE constraint failed")) {
 			return c.json({ error: "Email already exists" }, 409);
 		}
-		return c.json({ error: "Internal server error" }, 500);
+		return c.json(
+			{ error: "Internal server error", message: (error as Error).message },
+			500,
+		);
 	}
 });
 
