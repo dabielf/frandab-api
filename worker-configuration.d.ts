@@ -2,5 +2,6 @@
 
 interface CloudflareBindings {
 	KV: KVNamespace;
+	RESEND_API_KEY: string;
 	DB: D1Database;
 }
