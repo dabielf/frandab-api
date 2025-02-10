@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import userRouter, { validator, generateApiKey } from "./routes/users";
 import emailRouter from "./routes/emails";
 import { bearerAuth } from "hono/bearer-auth";
@@ -8,6 +9,7 @@ import { getDB } from "./lib/server/db";
 
 const app = new Hono<{ Bindings: CloudflareBindings }>();
 
+app.use(cors());
 app.use(
 	"/api/*",
 	bearerAuth({
