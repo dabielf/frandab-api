@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import userRouter, { validator, generateApiKey } from "./routes/users";
+import emailRouter from "./routes/emails";
 import { bearerAuth } from "hono/bearer-auth";
 import { users, apiKeys } from "./lib/server/db/schema";
 import { eq } from "drizzle-orm";
@@ -11,13 +12,11 @@ app.use(
 	"/api/*",
 	bearerAuth({
 		verifyToken: async (token, c) => {
-			console.log({ token });
 			const db = getDB(c.env);
 			const user = await db
 				.select()
 				.from(apiKeys)
 				.where(eq(apiKeys.key, token));
-			console.log({ user });
 
 			return user.length > 0;
 		},
@@ -60,5 +59,8 @@ app.get("/api", (c) => {
 
 // Mount user routes under /users
 app.route("/api/users", userRouter);
+
+// Mount email routes under /emails
+app.route("/api/emails", emailRouter);
 
 export default app;
