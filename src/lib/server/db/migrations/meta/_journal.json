@@ -5,8 +5,22 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1739201163465,
-      "tag": "0000_same_patch",
+      "when": 1739892706169,
+      "tag": "0000_small_gunslinger",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1739892793814,
+      "tag": "0001_slim_human_robot",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1739892831960,
+      "tag": "0002_heavy_leo",
       "breakpoints": true
     }
   ]

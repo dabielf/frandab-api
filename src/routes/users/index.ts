@@ -55,9 +55,11 @@ userRouter.post("/", validator, async (c) => {
 
 // Get all users
 userRouter.get("/", async (c) => {
+	console.log("GET /api/users called:");
 	try {
 		const db = getDB(c.env);
 		const userList = await db.select().from(users);
+		console.log({ userList });
 		return c.json({ users: userList });
 	} catch (error) {
 		return c.json({ error: "Internal server error" }, 500);

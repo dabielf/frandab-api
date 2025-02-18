@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `identity_token_idx` ON `users` (`identity_token`);

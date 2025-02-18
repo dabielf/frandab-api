@@ -13,13 +13,14 @@ export const users = sqliteTable(
 		id: integer("id").primaryKey({ autoIncrement: true }),
 		email: text("email").notNull().unique(),
 		name: text("name"),
-		// Use 'free' by default; switch to 'paid' when the user subscribes.
-
-		// Timestamps stored as text; you can also use a proper timestamp type if available.
+		identityToken: text("identity_token"),
 		createdAt: text("created_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
 		updatedAt: text("updated_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
 	},
-	(table) => [uniqueIndex("email_idx").on(table.email)],
+	(table) => [
+		uniqueIndex("email_idx").on(table.email),
+		uniqueIndex("identity_token_idx").on(table.identityToken),
+	],
 );
 
 export const apiKeys = sqliteTable(
@@ -32,9 +33,44 @@ export const apiKeys = sqliteTable(
 		updatedAt: text("updated_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
 	},
 	(table) => [
-		index("key_idx").on(table.key),
-		index("user_id_idx").on(table.userId),
+		index("api_key_idx").on(table.key),
+		index("api_user_id_idx").on(table.userId),
 	],
+);
+
+export const contacts = sqliteTable(
+	"contacts",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		userId: integer("user_id").references(() => users.id),
+		name: text("name").notNull(),
+		email: text("email"),
+		phone: text("phone"),
+		profession: text("profession"),
+		interests: text("interests"),
+		createdAt: text("created_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
+		updatedAt: text("updated_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
+	},
+	(table) => [
+		index("phone_idx").on(table.phone),
+		index("contact_user_id_idx").on(table.userId),
+	],
+);
+
+export const notes = sqliteTable(
+	"notes",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		userId: integer("user_id").references(() => users.id),
+		contactId: integer("contact_id")
+			.notNull()
+			.references(() => contacts.id),
+		title: text("title"),
+		content: text("content").notNull(),
+		createdAt: text("created_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
+		updatedAt: text("updated_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
+	},
+	(table) => [index("user_contact_id_idx").on(table.userId, table.contactId)],
 );
 
 export const emails = sqliteTable("emails", {

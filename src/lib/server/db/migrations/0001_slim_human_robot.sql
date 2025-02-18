@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `identity_token` text;

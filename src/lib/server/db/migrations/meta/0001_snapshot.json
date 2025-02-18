@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c8127946-cfc7-4426-a857-f5be5f836b2a",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "7f8a775d-259a-47b6-b92d-345ad68c6bf7",
+  "prevId": "c8127946-cfc7-4426-a857-f5be5f836b2a",
   "tables": {
     "api_keys": {
       "name": "api_keys",
@@ -389,6 +389,13 @@
         },
         "name": {
           "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "identity_token": {
+          "name": "identity_token",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

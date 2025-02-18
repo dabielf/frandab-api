@@ -27,7 +27,7 @@
 		{
 			"binding": "DB",
 			"database_name": "frandab-api",
-			"database_id": "8c36fb04-5f7e-4d03-bfea-66da713dbf78",
+			"database_id": "f5dfe3e6-cc9b-402e-a0f3-bf99d7451616",
 			"migrations_dir": "src/lib/server/db/migrations"
 		}
 	],

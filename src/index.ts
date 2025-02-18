@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import userRouter, { validator, generateApiKey } from "./routes/users";
 import emailRouter from "./routes/emails";
+import webhooksRouter from "./routes/webhooks";
 import { bearerAuth } from "hono/bearer-auth";
 import { users, apiKeys } from "./lib/server/db/schema";
 import { eq } from "drizzle-orm";
@@ -10,20 +11,12 @@ import { getDB } from "./lib/server/db";
 const app = new Hono<{ Bindings: CloudflareBindings }>();
 
 app.use(cors());
-app.use(
-	"/api/*",
-	bearerAuth({
-		verifyToken: async (token, c) => {
-			const db = getDB(c.env);
-			const user = await db
-				.select()
-				.from(apiKeys)
-				.where(eq(apiKeys.key, token));
+// Mount webhook routes under /webhooks
+app.route("/webhooks", webhooksRouter);
 
-			return user.length > 0;
-		},
-	}),
-);
+app.get("/", (c) => {
+	return c.text("Hello Frandab!");
+});
 
 app.post("/init-admin", validator, async (c) => {
 	try {
@@ -54,6 +47,22 @@ app.post("/init-admin", validator, async (c) => {
 		);
 	}
 });
+
+// app.use(
+// 	"/api/*",
+// 	bearerAuth({
+// 		verifyToken: async (token, c) => {
+// 			const db = getDB(c.env);
+// 			console.log({ token });
+// 			const user = await db
+// 				.select()
+// 				.from(apiKeys)
+// 				.where(eq(apiKeys.key, token));
+
+// 			return user.length > 0;
+// 		},
+// 	}),
+// );
 
 app.get("/api", (c) => {
 	return c.text("Hello François, welcome to your API!");
