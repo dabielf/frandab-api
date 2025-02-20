@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import userRouter, { validator, generateApiKey } from "./routes/users";
 import emailRouter from "./routes/emails";
 import webhooksRouter from "./routes/webhooks";
+import contactsRouter from "./routes/contacts";
 import { bearerAuth } from "hono/bearer-auth";
 import { users, apiKeys } from "./lib/server/db/schema";
 import { eq } from "drizzle-orm";
@@ -73,5 +74,8 @@ app.route("/api/users", userRouter);
 
 // Mount email routes under /emails
 app.route("/api/emails", emailRouter);
+
+// Mount contact routes under /contacts
+app.route("/api/contacts", contactsRouter);
 
 export default app;

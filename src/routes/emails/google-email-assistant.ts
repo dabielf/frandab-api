@@ -15,6 +15,15 @@ const googleEmailSchema = z.object({
 	gender: z.string().min(1).optional(),
 });
 
+const sendEmailSchema = z.object({
+	email: z.string().email(),
+	subject: z.string().min(1),
+	markdownContent: z.string().min(1),
+	fromName: z.string().min(1).optional(),
+});
+
+const sendEmailValidator = zValidator("json", sendEmailSchema);
+
 const googleValidator = zValidator("json", googleEmailSchema);
 
 function emailPromptBase(
@@ -44,7 +53,17 @@ You are an expert copywriter with a knack for creating enticing and concise emai
 ${instructions}
 
 Ensure that the final email is engaging, clear, and perfectly aligned with the provided instructions.
-The email should be in markdown format. Make sure it's pure markdown, no HTML. The email should be in the following format: # Title\nContent Body`;
+The email should be in markdown format. Make sure it's pure markdown, no HTML`;
+}
+
+function markdownToHtmlPromptBase(markdownContent: string) {
+	return `
+You are an markdown to HTML converter. Your task is to convert the following markdown content into HTML for an email:
+
+${markdownContent}
+
+
+The email should be in HTML format. Make sure it's pure HTML, no markdown.  The email should be in the following format: <div>Content Body</div>`;
 }
 
 googleEmailRouter.post("/", googleValidator, async (c) => {
@@ -92,12 +111,54 @@ googleEmailRouter.post("/", googleValidator, async (c) => {
 	}
 });
 
+googleEmailRouter.post("/send-md", sendEmailValidator, async (c) => {
+	try {
+		const google = createGoogleGenerativeAI({
+			apiKey: c.env.GOOGLE_GENERATIVE_AI_API_KEY,
+		});
+		const resend = new Resend(c.env.RESEND_API_KEY);
+		const { email, subject, fromName, markdownContent } = c.req.valid("json");
+
+		const {
+			object: { htmlContent },
+		} = await generateObject({
+			model: google("gemini-2.0-flash-exp", {
+				useSearchGrounding: true,
+			}),
+			schema: z.object({
+				htmlContent: z.string().min(1),
+			}),
+			prompt: markdownToHtmlPromptBase(markdownContent),
+		});
+
+		await resend.emails.send({
+			from: `${fromName || "François"} <hello@frandab.com>`,
+			to: [email],
+			subject,
+			html: htmlContent,
+		});
+
+		return c.json(
+			{
+				message: "Email sent successfully",
+			},
+			200,
+		);
+	} catch (error) {
+		return c.json(
+			{ error: "Internal server error", message: (error as Error).message },
+			500,
+		);
+	}
+});
+
 googleEmailRouter.post("/md", googleValidator, async (c) => {
 	try {
 		const google = createGoogleGenerativeAI({
 			apiKey: c.env.GOOGLE_GENERATIVE_AI_API_KEY,
 		});
-		const { fromName, instructions, language, gender } = c.req.valid("json");
+		const { fromName, email, instructions, language, gender } =
+			c.req.valid("json");
 
 		const {
 			object: { subject, markdownContent },
@@ -107,14 +168,22 @@ googleEmailRouter.post("/md", googleValidator, async (c) => {
 			}),
 			schema: z.object({
 				subject: z.string().min(1),
+				title: z.string().min(1),
 				markdownContent: z.string().min(1),
 			}),
-			prompt: emailPromptBase(instructions, fromName, gender, language),
+			prompt: markdownPromptBase(
+				instructions,
+				fromName || "François",
+				gender,
+				language,
+			),
 		});
 
 		return c.json(
 			{
+				email,
 				subject,
+				fromName: fromName || "François",
 				markdownContent,
 			},
 			200,

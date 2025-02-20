@@ -3,7 +3,8 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { getDB } from "../../lib/server/db";
 import { Webhook } from "svix";
-import { users, apiKeys } from "../../lib/server/db/schema";
+import { users, apiKeys, userSettings } from "../../lib/server/db/schema";
+import { createEncryptionKey } from "../../lib/server/crypto";
 import { eq } from "drizzle-orm";
 
 const webhooksRouter = new Hono<{ Bindings: CloudflareBindings }>();
@@ -94,10 +95,9 @@ webhooksRouter.post(
 				.select()
 				.from(users)
 				.where(eq(users.identityToken, identityToken))
-				.limit(1)
-				.single();
+				.limit(1);
 
-			if (existingUser) {
+			if (existingUser.length > 0) {
 				return c.json(
 					{
 						success: true,
@@ -106,10 +106,11 @@ webhooksRouter.post(
 					200,
 				);
 			}
+			const encryptionKey = await createEncryptionKey();
 
 			const [user] = await db
 				.insert(users)
-				.values({ identityToken, email, name })
+				.values({ identityToken, email, name, encryptionKey })
 				.returning();
 
 			const apiKey = generateApiKey();
@@ -117,6 +118,13 @@ webhooksRouter.post(
 				.insert(apiKeys)
 				.values({
 					key: apiKey,
+					userId: user.id,
+				})
+				.returning();
+
+			const [settings] = await db
+				.insert(userSettings)
+				.values({
 					userId: user.id,
 				})
 				.returning();
