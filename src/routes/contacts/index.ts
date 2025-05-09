@@ -10,7 +10,7 @@ const contactsRouter = new Hono<{ Bindings: CloudflareBindings }>();
 
 // Schema for contact creation and update
 const contactSchema = z.object({
-	userId: z.string(),
+	userId: z.string().optional(),
 	name: z.string().min(1),
 	email: z.string().email().optional(),
 	phone: z.string().optional(),
@@ -35,22 +35,29 @@ contactsRouter.post("/", contactValidator, async (c) => {
 	try {
 		const contactData = c.req.valid("json");
 		const db = getDB(c.env);
-		const user = await getUser(c);
-		if (user.error) {
-			return c.json({ error: "User not found" }, 404);
+		const { user, error } = await getUser(c);
+		if (!user || error) {
+			return c.json({ error: "User not found", message: error }, 404);
 		}
 
 		const [contact] = await db
 			.insert(contacts)
 			.values({
-				...contactData,
+				name: contactData.name,
+				email: contactData.email,
+				phone: contactData.phone,
+				profession: contactData.profession,
+				interests: contactData.interests,
 				userId: Number(user.id),
 			})
 			.returning();
 
 		return c.json({ contact }, 201);
 	} catch (error) {
-		return c.json({ error: "Failed to create contact" }, 500);
+		return c.json(
+			{ error: "Failed to create contact", message: (error as Error).message },
+			500,
+		);
 	}
 });
 
@@ -59,16 +66,17 @@ contactsRouter.get("/", async (c) => {
 	try {
 		const db = getDB(c.env);
 
-		const user = await getUser(c);
-		if (!user) {
-			return c.json({ error: "User not found" }, 404);
+		const { user, error, message } = await getUser(c);
+
+		if (!user || error) {
+			return c.json({ error, message, test: "test" }, 404);
 		}
 
 		try {
 			const contactList = await db
 				.select()
 				.from(contacts)
-				.where(eq(contacts.userId, user.id));
+				.where(eq(contacts.userId, Number(user.id)));
 
 			return c.json({ contacts: contactList || [] }, 200);
 		} catch (error) {

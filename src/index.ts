@@ -16,7 +16,7 @@ app.use(cors());
 app.route("/webhooks", webhooksRouter);
 
 app.get("/", (c) => {
-	return c.text("Hello Frandab!");
+	return c.text("Hello Frandab updated!");
 });
 
 app.post("/init-admin", validator, async (c) => {
@@ -66,7 +66,7 @@ app.post("/init-admin", validator, async (c) => {
 // );
 
 app.get("/api", (c) => {
-	return c.text("Hello François, welcome to your API!");
+	return c.text("Hello François, welcome to your API updated!");
 });
 
 // Mount user routes under /users

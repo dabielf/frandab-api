@@ -163,7 +163,7 @@ googleEmailRouter.post("/md", googleValidator, async (c) => {
 		const {
 			object: { subject, markdownContent },
 		} = await generateObject({
-			model: google("gemini-2.0-flash-exp", {
+			model: google("gemini-2.5-flash-preview-04-17", {
 				useSearchGrounding: true,
 			}),
 			schema: z.object({

@@ -21,11 +21,14 @@ export function generateApiKey(): string {
 }
 
 export type UserSettings = {
-	userId: number;
+	id: number;
+	userId: number | null;
 	openAiApiKey: string | null;
 	geminiApiKey: string | null;
 	resendApiKey: string | null;
 	information: string | null;
+	createdAt: string;
+	updatedAt: string;
 };
 
 export type User = {
@@ -34,20 +37,22 @@ export type User = {
 	name: string | null;
 	identityToken: string;
 	encryptionKey: string;
-	error: string | null;
+	error?: string;
 	settings: UserSettings | null;
 };
 
-export type ErrorMessage = {
-	error: string;
+export type GetUsersResponse = {
+	user?: User;
+	error?: string;
 	message?: string;
 };
 
-export async function getUser(c: Context): Promise<User | ErrorMessage> {
+export async function getUser(c: Context): Promise<GetUsersResponse> {
 	const db = getDB(c.env);
 	const userId = c.req.header("User-Id");
+	console.log({ userId });
 	if (!userId) {
-		return { error: "User not found" };
+		return { error: "User not found", message: "User not found" };
 	}
 
 	try {
@@ -61,17 +66,14 @@ export async function getUser(c: Context): Promise<User | ErrorMessage> {
 			return { error: "User not found" };
 		}
 
-		const userData = {
+		const user = {
 			...response[0].users,
 			settings: response[0].user_settings,
 		};
 
-		return {
-			...userData,
-			error: null,
-		};
+		return { user } as GetUsersResponse;
 	} catch (error) {
-		return { error: "User not found" };
+		return { error: "User not found", message: (error as Error).message };
 	}
 }
 
