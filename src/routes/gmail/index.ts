@@ -5,6 +5,7 @@ import type { gmail_v1 } from "@googleapis/gmail";
 import { google } from "googleapis";
 import type { OAuth2Client } from "google-auth-library";
 import { z } from "zod";
+import { html } from "hono/html";
 
 // --- Type Definitions ---
 interface EmailHeader {
@@ -636,6 +637,220 @@ app.post("/delete/:id", async (c: Context<Env>) => {
 		}
 		return c.json(
 			{ error: "Failed to trash email.", details: gapiError.message },
+			500,
+		);
+	}
+});
+
+app.get("/analyze-emails-html", async (c: Context<Env>) => {
+	try {
+		const oauth2Client = getOAuth2Client(c);
+		const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+
+		console.log("HTML Route: Fetching emails from the last 24 hours...");
+		const fetchedEmails = await getEmailsFromGmail(gmail, 24);
+
+		if (fetchedEmails.length === 0) {
+			console.log("HTML Route: No emails fetched to analyze.");
+			return c.html(html`
+				<!DOCTYPE html>
+				<html>
+				<head>
+					<title>Analyzed Emails</title>
+				</head>
+				<body>
+					<h1>Analyzed Emails</h1>
+					<p>No emails found in the last 24 hours to analyze.</p>
+				</body>
+				</html>
+			`);
+		}
+
+		console.log(
+			`HTML Route: Fetched ${fetchedEmails.length} emails. Starting batch analysis...`,
+		);
+
+		const batchAnalysisResults = await analyzeBatchEmailImportanceWithAISDK(
+			c,
+			fetchedEmails,
+		);
+
+		console.log(
+			`HTML Route: Finished batch analysis. Received ${batchAnalysisResults.length} results from AI.`,
+		);
+
+		// Note: Sent email checking for 'already_responded' is part of the needsResponseEmails logic,
+		// but for displayAnalyzedEmails, we mainly use the direct analysis results.
+		// We can still fetch sent emails if needed for other context, but it's not directly used for this display list construction.
+
+		const displayAnalyzedEmails: DisplayAnalyzedEmail[] = [];
+		const fetchedEmailsMap = new Map(
+			fetchedEmails.map((email) => [email.id, email]),
+		);
+
+		for (const analysis of batchAnalysisResults) {
+			const originalEmail = fetchedEmailsMap.get(analysis.emailId);
+			if (originalEmail) {
+				displayAnalyzedEmails.push({
+					id: originalEmail.id,
+					from: originalEmail.from,
+					subject: originalEmail.subject,
+					importance: analysis.importance,
+					reason: analysis.reason,
+					needs_response: analysis.needs_response,
+					time_sensitive: analysis.time_sensitive,
+					topics: analysis.topics,
+				});
+			} else {
+				console.warn(
+					`HTML Route: AI returned analysis for an unknown/unmatched emailId: ${analysis.emailId}`,
+				);
+				displayAnalyzedEmails.push({
+					id: analysis.emailId,
+					from: "Unknown (AI Mismatch)",
+					subject: "Unknown (AI Mismatch)",
+					importance: analysis.importance,
+					reason: `${analysis.reason} (Original email not found for this ID in fetched batch)`,
+					needs_response: analysis.needs_response,
+					time_sensitive: analysis.time_sensitive,
+					topics: analysis.topics,
+				});
+			}
+		}
+
+		// Sort by importance (High > Medium > Low) then by time sensitivity
+		displayAnalyzedEmails.sort((a, b) => {
+			const importanceOrder = { high: 0, medium: 1, low: 2 };
+			if (importanceOrder[a.importance] !== importanceOrder[b.importance]) {
+				return importanceOrder[a.importance] - importanceOrder[b.importance];
+			}
+			if (a.time_sensitive !== b.time_sensitive) {
+				return a.time_sensitive ? -1 : 1; // Time sensitive first
+			}
+			return 0;
+		});
+
+		return c.html(html`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Analyzed Emails</title>
+        <style>
+          body { font-family: sans-serif; margin: 20px; background-color: #f4f4f9; color: #333; }
+          h1 { color: #333; border-bottom: 2px solid #ccc; padding-bottom: 10px;}
+          table { width: 100%; border-collapse: collapse; margin-top: 20px; box-shadow: 0 2px 3px rgba(0,0,0,0.1); }
+          th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+          th { background-color: #e9e9e9; font-weight: bold; }
+          tr:nth-child(even) { background-color: #f9f9f9; }
+          tr:hover { background-color: #f1f1f1; }
+          .button-delete { 
+            background-color: #ff4d4d; 
+            color: white; 
+            border: none; 
+            padding: 8px 12px; 
+            text-align: center; 
+            text-decoration: none; 
+            display: inline-block; 
+            font-size: 14px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+          }
+          .button-delete:hover { background-color: #cc0000; }
+          .topics-list { list-style-type: disc; margin-left: 20px; padding-left: 0;}
+          .topics-list li { margin-bottom: 4px; }
+        </style>
+        <script>
+          async function deleteEmail(emailId) {
+            if (!confirm('Are you sure you want to delete email ' + emailId + '?')) {
+              return;
+            }
+            try {
+              const response = await fetch('/api/gmail/delete/' + emailId, {
+                method: 'POST',
+              });
+              if (response.ok) {
+                const result = await response.json();
+                alert(result.message || 'Email deleted successfully!');
+                window.location.reload();
+              } else {
+                const errorResult = await response.json();
+                alert('Failed to delete email: ' + (errorResult.details || response.statusText));
+              }
+            } catch (error) {
+              console.error('Error deleting email:', error);
+              alert('An error occurred while trying to delete the email.');
+            }
+          }
+        </script>
+      </head>
+      <body>
+        <h1>Analyzed Emails (${displayAnalyzedEmails.length})</h1>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>From</th>
+              <th>Subject</th>
+              <th>Importance</th>
+              <th>Reason</th>
+              <th>Needs Response</th>
+              <th>Time Sensitive</th>
+              <th>Topics</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${displayAnalyzedEmails.map(
+							(email) => html`
+              <tr>
+                <td>${email.id}</td>
+                <td>${email.from}</td>
+                <td>${email.subject}</td>
+                <td>${email.importance.toUpperCase()}</td>
+                <td>${email.reason}</td>
+                <td>${email.needs_response ? "Yes" : "No"}</td>
+                <td>${email.time_sensitive ? "Yes" : "No"}</td>
+                <td>
+                  ${
+										email.topics && email.topics.length > 0
+											? html`<ul class="topics-list">${email.topics.map((topic) => html`<li>${topic}</li>`)}</ul>`
+											: "N/A"
+									}
+                </td>
+                <td>
+                  <button class="button-delete" onclick="deleteEmail('${email.id}')">Delete</button>
+                </td>
+              </tr>
+            `,
+						)}
+          </tbody>
+        </table>
+        ${displayAnalyzedEmails.length === 0 ? html`<p>No emails matching criteria to display.</p>` : ""}
+      </body>
+      </html>
+    `);
+	} catch (error) {
+		console.error("Error in /analyze-emails-html route:", error);
+		return c.html(
+			html`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Error</title>
+        <style>
+          body { font-family: sans-serif; margin: 20px; background-color: #fdd; color: #900; }
+          h1 { color: #c00; }
+          pre { background-color: #fff0f0; border: 1px solid #ffaaaa; padding: 10px; white-space: pre-wrap; word-wrap: break-word; }
+        </style>
+      </head>
+      <body>
+        <h1>Error Analyzing Emails</h1>
+        <p>Sorry, something went wrong while analyzing the emails:</p>
+        <pre>${(error as Error)?.message || String(error)}</pre>
+        <p><a href="/analyze-emails-html">Try again</a></p>
+      </body>
+      </html>
+    `,
 			500,
 		);
 	}
