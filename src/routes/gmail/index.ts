@@ -86,7 +86,17 @@ interface NeedsResponseOutput {
 	last_updated: string;
 	needs_response_emails: AnalyzedEmail[];
 	report: string;
+	num_emails: number;
 	analyzed_emails: DisplayAnalyzedEmail[];
+}
+
+interface BatchAnalyzedEmail {
+	emailId: string;
+	importance: "high" | "medium" | "low";
+	reason: string;
+	needs_response: boolean;
+	time_sensitive: boolean;
+	topics: string[];
 }
 
 // Define a more specific error type for Google API errors
@@ -102,10 +112,16 @@ interface Env {
 		GOOGLE_CLIENT_ID: string;
 		GOOGLE_CLIENT_SECRET: string;
 		GOOGLE_REFRESH_TOKEN: string;
+		KV: KVNamespace; // Added KV binding type
 	};
 }
 
 const app = new Hono<Env>();
+
+// --- Cache Constants ---
+const GMAIL_FETCHED_EMAILS_CACHE_KEY = "gmail_fetched_emails_v1";
+const GMAIL_ANALYSIS_RESULTS_CACHE_KEY = "gmail_analysis_results_v1";
+const CACHE_TTL_SECONDS = 60 * 30; // 30 minutes
 
 // --- Helper Functions ---
 function getOAuth2Client(c: Context<Env>): OAuth2Client {
@@ -332,7 +348,7 @@ interface EmailInputForAI {
 async function analyzeBatchEmailImportanceWithAISDK(
 	c: Context<Env>,
 	emails: Email[],
-): Promise<AiEmailAnalysis[]> {
+): Promise<BatchAnalyzedEmail[]> {
 	if (!emails || emails.length === 0) {
 		return [];
 	}
@@ -393,9 +409,9 @@ async function analyzeBatchEmailImportanceWithAISDK(
 		});
 		console.log(
 			"Batch AI analysis successful. Results count: ",
-			(analysisResults as AiEmailAnalysis[]).length,
+			(analysisResults as BatchAnalyzedEmail[]).length,
 		);
-		return analysisResults as AiEmailAnalysis[];
+		return analysisResults as BatchAnalyzedEmail[];
 	} catch (error) {
 		console.error("Error during batch AI email analysis:", error);
 		let errorMessage = "AI generation failed.";
@@ -421,8 +437,103 @@ app.get("/analyze-emails", async (c: Context<Env>) => {
 		const oauth2Client = getOAuth2Client(c);
 		const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-		console.log("Fetching emails from the last 24 hours...");
-		const fetchedEmails = await getEmailsFromGmail(gmail, 24); // Expects to return Email[]
+		const forceRefresh = c.req.query("refresh") === "true";
+		let fetchedEmails: FetchedEmail[] | null = null;
+		let fetchedEmailsCameFromCache = false;
+		let batchAnalysisResults: BatchAnalyzedEmail[] | null = null;
+
+		if (!forceRefresh) {
+			try {
+				console.log(
+					`JSON Route: Attempting to read '${GMAIL_FETCHED_EMAILS_CACHE_KEY}' from KV cache...`,
+				);
+				const cachedData = await c.env.KV.get(GMAIL_FETCHED_EMAILS_CACHE_KEY, {
+					type: "json",
+				});
+				if (cachedData) {
+					fetchedEmails = cachedData as FetchedEmail[];
+					fetchedEmailsCameFromCache = true;
+					console.log(
+						`JSON Route: Successfully loaded ${fetchedEmails?.length || 0} emails from KV cache.`,
+					);
+				} else {
+					console.log(
+						"JSON Route: No data found in email KV cache or cache expired.",
+					);
+				}
+			} catch (kvError) {
+				console.error("JSON Route: Error reading from email KV cache:", kvError);
+			}
+		} else {
+			console.log("JSON Route: Force refresh triggered for emails.");
+		}
+
+		if (!fetchedEmails) {
+			console.log(
+				"JSON Route: Fetching emails from Gmail (email cache miss or force refresh)...",
+			);
+			fetchedEmailsCameFromCache = false; // Explicitly set as emails will be fresh
+			const emailsFromGmail = await getEmailsFromGmail(gmail, 24);
+			if (emailsFromGmail && emailsFromGmail.length >= 0) {
+				fetchedEmails = emailsFromGmail;
+				try {
+					console.log(
+						`JSON Route: Storing ${fetchedEmails.length} fetched emails into KV cache ('${GMAIL_FETCHED_EMAILS_CACHE_KEY}')...`,
+					);
+					await c.env.KV.put(
+						GMAIL_FETCHED_EMAILS_CACHE_KEY,
+						JSON.stringify(fetchedEmails),
+						{
+							expirationTtl: CACHE_TTL_SECONDS,
+						},
+					);
+					console.log("JSON Route: Successfully stored emails in KV cache.");
+				} catch (kvError) {
+					console.error("JSON Route: Error writing emails to KV cache:", kvError);
+				}
+			} else {
+				fetchedEmails = []; // Ensure it's an empty array if Gmail fetch fails or returns no emails
+			}
+		}
+
+		// Ensure fetchedEmails is not null before proceeding to analysis
+		if (fetchedEmails === null) fetchedEmails = [];
+
+		// Now handle batchAnalysisResults caching
+		const shouldFetchAnalysisFresh = forceRefresh || !fetchedEmailsCameFromCache;
+
+		if (!shouldFetchAnalysisFresh) {
+			try {
+				console.log(`JSON Route: Attempting to read '${GMAIL_ANALYSIS_RESULTS_CACHE_KEY}' from KV cache...`);
+				const cachedAnalysis = await c.env.KV.get(GMAIL_ANALYSIS_RESULTS_CACHE_KEY, { type: "json" });
+				if (cachedAnalysis) {
+					batchAnalysisResults = cachedAnalysis as BatchAnalyzedEmail[];
+					console.log(`JSON Route: Successfully loaded ${batchAnalysisResults?.length || 0} analysis results from KV cache.`);
+				} else {
+					console.log("JSON Route: No data found in analysis KV cache or cache expired.");
+				}
+			} catch (kvError) {
+				console.error("JSON Route: Error reading from analysis KV cache:", kvError);
+			}
+		}
+
+		if (!batchAnalysisResults) {
+			if (shouldFetchAnalysisFresh) {
+				console.log("JSON Route: Computing fresh analysis results (force refresh or fresh emails).");
+			} else {
+				console.log("JSON Route: Computing fresh analysis results (analysis cache miss).");
+			}
+			batchAnalysisResults = await analyzeBatchEmailImportanceWithAISDK(c, fetchedEmails);
+			try {
+				console.log(`JSON Route: Storing ${batchAnalysisResults.length} analysis results into KV cache ('${GMAIL_ANALYSIS_RESULTS_CACHE_KEY}')...`);
+				await c.env.KV.put(GMAIL_ANALYSIS_RESULTS_CACHE_KEY, JSON.stringify(batchAnalysisResults), {
+					expirationTtl: CACHE_TTL_SECONDS,
+				});
+				console.log("JSON Route: Successfully stored analysis results in KV cache.");
+			} catch (kvError) {
+				console.error("JSON Route: Error writing analysis results to KV cache:", kvError);
+			}
+		}
 
 		if (fetchedEmails.length === 0) {
 			console.log("No emails fetched to analyze.");
@@ -436,16 +547,6 @@ app.get("/analyze-emails", async (c: Context<Env>) => {
 
 		console.log(
 			`Fetched ${fetchedEmails.length} emails. Starting batch analysis...`,
-		);
-
-		// Call the new batch analysis function
-		const batchAnalysisResults = await analyzeBatchEmailImportanceWithAISDK(
-			c,
-			fetchedEmails,
-		);
-
-		console.log(
-			`Finished batch analysis. Received ${batchAnalysisResults.length} results from AI.`,
 		);
 
 		console.log("Checking sent folder for previous responses (last 7 days)...");
@@ -563,6 +664,7 @@ Generated on: ${new Date().toISOString()}
 			last_updated: new Date().toISOString(),
 			needs_response_emails: sortedEmails,
 			report: report,
+			num_emails: fetchedEmails.length,
 			analyzed_emails: displayAnalyzedEmails,
 		};
 
@@ -609,8 +711,73 @@ app.post("/delete/:id", async (c: Context<Env>) => {
 		});
 
 		console.log(`Email with ID: ${emailId} successfully moved to trash.`);
+
+		// Attempt to update the KV cache
+		try {
+			console.log(
+				`Attempting to remove email ${emailId} from KV cache ('${GMAIL_FETCHED_EMAILS_CACHE_KEY}')...`,
+			);
+			const cachedEmails = await c.env.KV.get(GMAIL_FETCHED_EMAILS_CACHE_KEY, {
+				type: "json",
+			});
+			if (cachedEmails && Array.isArray(cachedEmails)) {
+				const updatedCachedEmails = (cachedEmails as FetchedEmail[]).filter(
+					(email) => email.id !== emailId,
+				);
+				if (
+					updatedCachedEmails.length < (cachedEmails as FetchedEmail[]).length
+				) {
+					await c.env.KV.put(
+						GMAIL_FETCHED_EMAILS_CACHE_KEY,
+						JSON.stringify(updatedCachedEmails),
+						{
+							expirationTtl: CACHE_TTL_SECONDS,
+						},
+					);
+					console.log(
+						`Successfully removed email ${emailId} from KV cache and updated.`,
+					);
+					// Update the analysis cache by removing the specific email's analysis
+					try {
+						console.log(`Attempting to update analysis cache ('${GMAIL_ANALYSIS_RESULTS_CACHE_KEY}') for deleted email ${emailId}...`);
+						const cachedAnalysis = await c.env.KV.get(GMAIL_ANALYSIS_RESULTS_CACHE_KEY, { type: "json" });
+						if (cachedAnalysis && Array.isArray(cachedAnalysis)) {
+							const updatedAnalysisResults = (cachedAnalysis as BatchAnalyzedEmail[]).filter(analysis => analysis.emailId !== emailId);
+							if (updatedAnalysisResults.length < (cachedAnalysis as BatchAnalyzedEmail[]).length) {
+								await c.env.KV.put(GMAIL_ANALYSIS_RESULTS_CACHE_KEY, JSON.stringify(updatedAnalysisResults), {
+									expirationTtl: CACHE_TTL_SECONDS,
+								});
+								console.log(`Successfully removed analysis for email ${emailId} from KV cache and updated analysis cache.`);
+							} else {
+								console.log(`Analysis for email ${emailId} not found in analysis KV cache, no update needed.`);
+							}
+						} else {
+							console.log("Analysis KV cache is empty or not an array, skipping update for deletion.");
+						}
+					} catch (kvAnalysisError) {
+						console.error(`Error updating analysis KV cache for deleted email ${emailId}:`, kvAnalysisError);
+						// Do not let this error block the main success response
+					}
+				} else {
+					console.log(
+						`Email ${emailId} not found in KV cache, no update needed.`,
+					);
+				}
+			} else {
+				console.log(
+					"KV cache is empty or not an array, skipping cache update for deletion.",
+				);
+			}
+		} catch (kvError) {
+			console.error(
+				`Error updating KV cache after deleting email ${emailId}:`,
+				kvError,
+			);
+			// Do not let KV error block the main success response for Gmail deletion
+		}
+
 		return c.json({
-			message: `Email with ID: ${emailId} successfully moved to trash.`,
+			message: `Email with ID: ${emailId} successfully moved to trash. Cache updated.`,
 		});
 	} catch (error) {
 		const gapiError = error as GApiError; // Cast to our more specific error type
@@ -643,40 +810,223 @@ app.post("/delete/:id", async (c: Context<Env>) => {
 });
 
 app.get("/analyze-emails-html", async (c: Context<Env>) => {
+	const styles = html`
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 20px;
+        background-color: #f4f4f9;
+        color: #333;
+      }
+      h1 {
+        color: #333;
+        border-bottom: 2px solid #ccc;
+        padding-bottom: 10px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+        box-shadow: 0 2px 3px rgba(0,0,0,0.1);
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 10px;
+        text-align: left;
+      }
+      th {
+        background-color: #e9e9e9;
+        color: #333;
+      }
+      tr:nth-child(even) {
+        background-color: #f9f9f9;
+      }
+      tr:hover {
+        background-color: #f1f1f1;
+      }
+      .button-delete {
+        background-color: #f44336;
+        color: white;
+        padding: 5px 10px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .button-delete:hover {
+        background-color: #da190b;
+      }
+      .topics-list {
+        list-style-type: disc;
+        padding-left: 20px;
+        margin: 0;
+      }
+      .topics-list li {
+        margin-bottom: 4px;
+      }
+      .button-refresh {
+        background-color: #4CAF50; /* Green */
+        color: white;
+        padding: 10px 15px;
+        margin-bottom: 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+      }
+      .button-refresh:hover {
+        background-color: #45a049;
+      }
+    </style>
+  `;
 	try {
 		const oauth2Client = getOAuth2Client(c);
 		const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-		console.log("HTML Route: Fetching emails from the last 24 hours...");
-		const fetchedEmails = await getEmailsFromGmail(gmail, 24);
+		const forceRefresh = c.req.query("refresh") === "true";
+		let fetchedEmails: FetchedEmail[] | null = null;
+		let fetchedEmailsCameFromCache = false;
+		let batchAnalysisResults: BatchAnalyzedEmail[] | null = null;
 
-		if (fetchedEmails.length === 0) {
-			console.log("HTML Route: No emails fetched to analyze.");
+		if (!forceRefresh) {
+			try {
+				console.log(
+					`HTML Route: Attempting to read '${GMAIL_FETCHED_EMAILS_CACHE_KEY}' from KV cache...`,
+				);
+				const cachedData = await c.env.KV.get(GMAIL_FETCHED_EMAILS_CACHE_KEY, {
+					type: "json",
+				});
+				if (cachedData) {
+					fetchedEmails = cachedData as FetchedEmail[];
+					fetchedEmailsCameFromCache = true;
+					console.log(
+						`HTML Route: Successfully loaded ${fetchedEmails?.length || 0} emails from KV cache.`,
+					);
+				} else {
+					console.log(
+						"HTML Route: No data found in email KV cache or cache expired.",
+					);
+				}
+			} catch (kvError) {
+				console.error("HTML Route: Error reading from email KV cache:", kvError);
+			}
+		} else {
+			console.log("HTML Route: Force refresh triggered for emails.");
+		}
+
+		if (!fetchedEmails) {
+			console.log(
+				"HTML Route: Fetching emails from Gmail (email cache miss or force refresh)...",
+			);
+			fetchedEmailsCameFromCache = false; // Explicitly set as emails will be fresh
+			const emailsFromGmail = await getEmailsFromGmail(gmail, 24);
+			if (emailsFromGmail && emailsFromGmail.length >= 0) {
+				fetchedEmails = emailsFromGmail;
+				try {
+					console.log(
+						`HTML Route: Storing ${fetchedEmails.length} fetched emails into KV cache ('${GMAIL_FETCHED_EMAILS_CACHE_KEY}')...`,
+					);
+					await c.env.KV.put(
+						GMAIL_FETCHED_EMAILS_CACHE_KEY,
+						JSON.stringify(fetchedEmails),
+						{
+							expirationTtl: CACHE_TTL_SECONDS,
+						},
+					);
+					console.log("HTML Route: Successfully stored emails in KV cache.");
+				} catch (kvError) {
+					console.error("HTML Route: Error writing emails to KV cache:", kvError);
+				}
+			} else {
+				fetchedEmails = []; // Ensure it's an empty array if Gmail fetch fails or returns no emails
+			}
+		}
+
+		// Ensure fetchedEmails is not null
+		if (fetchedEmails === null) fetchedEmails = [];
+
+		if (fetchedEmails.length === 0 && !forceRefresh && fetchedEmailsCameFromCache) {
+			// If cache was hit, it was empty, and we're not forcing a refresh, show no emails message from cache.
+			// Otherwise, if forceRefresh is true or fetchedEmailsCameFromCache is false,
+			// the !fetchedEmails || fetchedEmails.length === 0 check below will handle it after attempting Gmail fetch.
+			console.log("HTML Route: No emails found in cache, and not forcing refresh. Displaying no emails page.");
 			return c.html(html`
 				<!DOCTYPE html>
 				<html>
-				<head>
-					<title>Analyzed Emails</title>
-				</head>
+				<head><title>Analyzed Emails</title>${styles}</head>
 				<body>
-					<h1>Analyzed Emails</h1>
-					<p>No emails found in the last 24 hours to analyze.</p>
+					<button onclick="window.location.href='?refresh=true'" class="button-refresh">Refresh Data</button>
+					<h1>No Emails Found</h1>
+					<p>No emails were found in your inbox for the last 24 hours, or the cache is empty. Try refreshing the data.</p>
+				</body>
+				</html>
+			`);
+		}
+
+		// Now handle batchAnalysisResults caching
+		const shouldFetchAnalysisFresh = forceRefresh || !fetchedEmailsCameFromCache;
+
+		if (!shouldFetchAnalysisFresh) {
+			try {
+				console.log(`HTML Route: Attempting to read '${GMAIL_ANALYSIS_RESULTS_CACHE_KEY}' from KV cache...`);
+				const cachedAnalysis = await c.env.KV.get(GMAIL_ANALYSIS_RESULTS_CACHE_KEY, { type: "json" });
+				if (cachedAnalysis) {
+					batchAnalysisResults = cachedAnalysis as BatchAnalyzedEmail[];
+					console.log(`HTML Route: Successfully loaded ${batchAnalysisResults?.length || 0} analysis results from KV cache.`);
+				} else {
+					console.log("HTML Route: No data found in analysis KV cache or cache expired.");
+				}
+			} catch (kvError) {
+				console.error("HTML Route: Error reading from analysis KV cache:", kvError);
+			}
+		}
+
+		if (!batchAnalysisResults) {
+			if (shouldFetchAnalysisFresh) {
+				console.log("HTML Route: Computing fresh analysis results (force refresh or fresh emails).");
+			} else {
+				console.log("HTML Route: Computing fresh analysis results (analysis cache miss).");
+			}
+			batchAnalysisResults = await analyzeBatchEmailImportanceWithAISDK(c, fetchedEmails ?? []);
+			try {
+				console.log(`HTML Route: Storing ${batchAnalysisResults.length} analysis results into KV cache ('${GMAIL_ANALYSIS_RESULTS_CACHE_KEY}')...`);
+				await c.env.KV.put(GMAIL_ANALYSIS_RESULTS_CACHE_KEY, JSON.stringify(batchAnalysisResults), {
+					expirationTtl: CACHE_TTL_SECONDS,
+				});
+				console.log("HTML Route: Successfully stored analysis results in KV cache.");
+			} catch (kvError) {
+				console.error("HTML Route: Error writing analysis results to KV cache:", kvError);
+			}
+		}
+
+		// Fallback for no emails after all attempts (Gmail fetch and/or cache for emails/analysis)
+		if (!fetchedEmails || fetchedEmails.length === 0) {
+			console.log(
+				"HTML Route: No emails fetched to analyze (after cache and Gmail attempt).",
+			);
+			return c.html(html`
+				<!DOCTYPE html>
+				<html>
+				<head><title>Analyzed Emails</title>${styles}</head>
+				<body>
+					<button onclick="window.location.href='?refresh=true'" class="button-refresh">Refresh Data</button>
+					<h1>No Emails Found</h1>
+					<p>No emails were found in your inbox for the last 24 hours, or the cache is empty. Try refreshing the data.</p>
 				</body>
 				</html>
 			`);
 		}
 
 		console.log(
-			`HTML Route: Fetched ${fetchedEmails.length} emails. Starting batch analysis...`,
+			`HTML Route: Fetched ${fetchedEmails.length} emails. Starting display generation with ${batchAnalysisResults?.length || 0} analysis results...`,
 		);
 
-		const batchAnalysisResults = await analyzeBatchEmailImportanceWithAISDK(
-			c,
-			fetchedEmails,
-		);
+		// Ensure batchAnalysisResults is not null before proceeding
+		if (batchAnalysisResults === null) batchAnalysisResults = [];
 
 		console.log(
-			`HTML Route: Finished batch analysis. Received ${batchAnalysisResults.length} results from AI.`,
+			`HTML Route: Finished batch analysis. Received ${batchAnalysisResults.length} results from AI (or cache).`,
 		);
 
 		// Note: Sent email checking for 'already_responded' is part of the needsResponseEmails logic,
@@ -735,33 +1085,10 @@ app.get("/analyze-emails-html", async (c: Context<Env>) => {
       <html>
       <head>
         <title>Analyzed Emails</title>
-        <style>
-          body { font-family: sans-serif; margin: 20px; background-color: #f4f4f9; color: #333; }
-          h1 { color: #333; border-bottom: 2px solid #ccc; padding-bottom: 10px;}
-          table { width: 100%; border-collapse: collapse; margin-top: 20px; box-shadow: 0 2px 3px rgba(0,0,0,0.1); }
-          th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
-          th { background-color: #e9e9e9; font-weight: bold; }
-          tr:nth-child(even) { background-color: #f9f9f9; }
-          tr:hover { background-color: #f1f1f1; }
-          .button-delete { 
-            background-color: #ff4d4d; 
-            color: white; 
-            border: none; 
-            padding: 8px 12px; 
-            text-align: center; 
-            text-decoration: none; 
-            display: inline-block; 
-            font-size: 14px; 
-            border-radius: 4px; 
-            cursor: pointer; 
-          }
-          .button-delete:hover { background-color: #cc0000; }
-          .topics-list { list-style-type: disc; margin-left: 20px; padding-left: 0;}
-          .topics-list li { margin-bottom: 4px; }
-        </style>
+        ${styles}
         <script>
           async function deleteEmail(emailId) {
-            if (!confirm('Are you sure you want to delete email ' + emailId + '?')) {
+            if (!confirm('Are you sure you want to delete email ' + emailId + '? This action cannot be undone.')) {
               return;
             }
             try {
@@ -769,9 +1096,19 @@ app.get("/analyze-emails-html", async (c: Context<Env>) => {
                 method: 'POST',
               });
               if (response.ok) {
-                const result = await response.json();
-                alert(result.message || 'Email deleted successfully!');
-                window.location.reload();
+                // Remove the row from the table
+                const row = document.getElementById('email-row-' + emailId);
+                if (row) {
+                  row.remove();
+                }
+                // Update the count in the header
+                const emailCountElement = document.getElementById('email-count');
+                if (emailCountElement) {
+                  const currentCount = parseInt(emailCountElement.innerText, 10);
+                  if (!isNaN(currentCount)) {
+                    emailCountElement.innerText = (currentCount - 1).toString();
+                  }
+                }
               } else {
                 const errorResult = await response.json();
                 alert('Failed to delete email: ' + (errorResult.details || response.statusText));
@@ -784,6 +1121,7 @@ app.get("/analyze-emails-html", async (c: Context<Env>) => {
         </script>
       </head>
       <body>
+        <button class="button-refresh" onclick="window.location.href='?refresh=true'">Refresh Data</button>
         <h1>Analyzed Emails (${displayAnalyzedEmails.length})</h1>
         <table>
           <thead>
@@ -802,7 +1140,7 @@ app.get("/analyze-emails-html", async (c: Context<Env>) => {
           <tbody>
             ${displayAnalyzedEmails.map(
 							(email) => html`
-              <tr>
+              <tr id="email-row-${email.id}">
                 <td>${email.id}</td>
                 <td>${email.from}</td>
                 <td>${email.subject}</td>
