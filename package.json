@@ -13,6 +13,7 @@
   "dependencies": {
     "@ai-sdk/google": "^1.1.11",
     "@ai-sdk/openai": "^1.1.9",
+    "@googleapis/gmail": "^12.0.0",
     "@hono/zod-validator": "^0.4.2",
     "@libsql/client": "^0.14.0",
     "@react-email/components": "^0.0.33",
@@ -20,7 +21,9 @@
     "ai": "^4.1.34",
     "drizzle-kit": "^0.30.4",
     "drizzle-orm": "^0.39.2",
-    "hono": "^4.6.20",
+    "googleapis": "^148.0.0",
+    "hono": "^4.7.9",
+    "openai": "^4.98.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "resend": "^4.1.2",
